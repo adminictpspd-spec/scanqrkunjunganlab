@@ -54,13 +54,18 @@
         </div>
         <div class="row align-items-center mb-2">
           <div class="col-5"><span class="badge bg-secondary">Keperluan</span></div>
-          <div class="col-7"><strong id="displayKeperluan">-</strong></div>
+          <div class="col-7">
+            <select id="selKeperluan" class="form-select form-select-sm"></select>
+          </div>
         </div>
-        <div class="row align-items-center" id="boxDisplayCatatan" style="display:none;">
-          <div class="col-5"><span class="badge bg-dark">Catatan</span></div>
-          <div class="col-7"><span id="displayCatatan" class="text-muted fst-italic">-</span></div>
+        <div class="row align-items-start">
+          <div class="col-5 pt-1"><span class="badge bg-dark">Catatan</span></div>
+          <div class="col-7">
+            <textarea id="selCatatan" class="form-control form-control-sm" rows="2" placeholder="Catatan tambahan (opsional)..."></textarea>
+          </div>
         </div>
       </div>
+      <p class="text-muted text-center mb-3" style="font-size:.78rem;">💡 Ganti Keperluan/Catatan di atas kapan saja sebelum scan berikutnya — tidak perlu buka tab baru.</p>
 
       <div id="reader" class="text-center"></div>
 
@@ -107,13 +112,34 @@ window.onload = function () {
     return;
   }
   document.getElementById('displayLab').innerText = LAB;
-  document.getElementById('displayKeperluan').innerText = KEPERLUAN;
-  if (CATATAN && CATATAN !== '-') {
-    document.getElementById('displayCatatan').innerText = CATATAN;
-    document.getElementById('boxDisplayCatatan').style.display = 'flex';
-  }
+  document.getElementById('selCatatan').value = (CATATAN && CATATAN !== '-') ? CATATAN : '';
+  muatDaftarKeperluan_();
   startScanner();
 };
+
+function muatDaftarKeperluan_() {
+  apiCall('getKeperluanForLab', { token: TOKEN, lab: LAB }).then(function (resp) {
+    var sel = document.getElementById('selKeperluan');
+    var list = (resp && resp.status === 'success' && resp.keperluans) ? resp.keperluans : [];
+    if (list.indexOf(KEPERLUAN) === -1 && KEPERLUAN) list.unshift(KEPERLUAN);
+    sel.innerHTML = list.map(function (k) { return '<option value="' + k + '">' + k + '</option>'; }).join('');
+    sel.value = KEPERLUAN;
+  }).catch(function () {
+    var sel = document.getElementById('selKeperluan');
+    sel.innerHTML = '<option value="' + KEPERLUAN + '">' + KEPERLUAN + '</option>';
+  });
+}
+
+// Ambil nilai keperluan & catatan TERBARU dari form (bukan nilai awal dari URL),
+// supaya perubahan yang dilakukan langsung di halaman scan ini selalu terpakai.
+function keperluanAktif_() {
+  var sel = document.getElementById('selKeperluan');
+  return (sel && sel.value) ? sel.value : KEPERLUAN;
+}
+function catatanAktif_() {
+  var val = document.getElementById('selCatatan').value.trim();
+  return val === '' ? '-' : val;
+}
 
 /* ======================= PEMANGGIL API KE APPS SCRIPT (GET, tanpa preflight CORS) ======================= */
 function apiCall(action, params) {
@@ -127,7 +153,7 @@ function apiCall(action, params) {
 }
 
 function catatAbsenApi(nim) {
-  return apiCall('catatAbsen', { token: TOKEN, nim: nim, lab: LAB, keperluan: KEPERLUAN, catatan: CATATAN });
+  return apiCall('catatAbsen', { token: TOKEN, nim: nim, lab: LAB, keperluan: keperluanAktif_(), catatan: catatanAktif_() });
 }
 
 /* ======================= KAMERA ======================= */
