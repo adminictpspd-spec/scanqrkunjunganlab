@@ -157,6 +157,12 @@ function catatAbsenApi(nim) {
 }
 
 /* ======================= KAMERA ======================= */
+// Kamera HANYA dinyalakan sekali di sini dan TIDAK PERNAH di-stop lagi antar-scan
+// (supaya tidak on/off berulang-ulang). Saat memproses, cukup overlay solid yang
+// ditampilkan menutupi preview video — video-nya sendiri tetap jalan di baliknya.
+var COOLDOWN_MS = 4000; // jeda supaya QR yang sama yang masih di depan kamera tidak ke-submit berkali-kali
+var lastNimScanned = null, lastScanTime = 0;
+
 function startScanner() {
   document.getElementById('cameraHelp').classList.add('d-none');
 
@@ -167,10 +173,10 @@ function startScanner() {
 
   html5Qrcode = new Html5Qrcode('reader');
   html5Qrcode.start({ facingMode: 'environment' }, { fps: 15, qrbox: { width: 250, height: 250 } }, onScanSuccess, onScanFailure)
-    .then(function () { document.getElementById('cameraHelp').classList.add('d-none'); })
+    .then(function () { document.getElementById('cameraHelp').classList.add('d-none'); buatOverlay_(); })
     .catch(function (err1) {
       html5Qrcode.start({ facingMode: 'user' }, { fps: 15, qrbox: { width: 250, height: 250 } }, onScanSuccess, onScanFailure)
-        .then(function () { document.getElementById('cameraHelp').classList.add('d-none'); })
+        .then(function () { document.getElementById('cameraHelp').classList.add('d-none'); buatOverlay_(); })
         .catch(function (err2) {
           showCameraHelp_(describeCameraError_(err2 || err1));
         });
@@ -193,59 +199,62 @@ function showCameraHelp_(text) {
   el.classList.remove('d-none');
 }
 
-function onScanSuccess(decodedText) {
-  if (decodedText && !isProcessing) {
-    isProcessing = true;
-    var nimMhs = decodedText.trim();
-    document.getElementById('notifManual').classList.add('d-none');
-
-    var readerDiv = document.getElementById('reader');
-    readerDiv.innerHTML += '<div id="cameraOverlay" class="scanner-overlay bg-proses">' +
-      '<div class="spinner-border text-primary" style="width:3rem;height:3rem;" role="status"></div>' +
-      '<p>Sedang Memproses...<br><span class="text-muted" style="font-size:.9rem;">NIM: ' + nimMhs + '</span></p></div>';
-
-    if (html5Qrcode && html5Qrcode.isScanning) {
-      html5Qrcode.stop().then(function () { kirimDataAbsen(nimMhs, true); }).catch(function () { kirimDataAbsen(nimMhs, true); });
-    } else {
-      kirimDataAbsen(nimMhs, true);
-    }
-  }
+// Overlay dibuat SEKALI (bukan setiap scan), lalu tinggal ditampilkan/disembunyikan.
+function buatOverlay_() {
+  if (document.getElementById('cameraOverlay')) return;
+  var el = document.createElement('div');
+  el.id = 'cameraOverlay';
+  el.className = 'scanner-overlay';
+  el.style.display = 'none';
+  document.getElementById('reader').appendChild(el);
 }
-function onScanFailure() { /* biarkan terus mencari QR */ }
 
-function kirimDataAbsen(nimMhs, isFromCamera) {
-  var overlayDiv = document.getElementById('cameraOverlay');
+function tampilkanOverlay_(cls, html) {
+  var el = document.getElementById('cameraOverlay');
+  if (!el) return;
+  el.className = 'scanner-overlay ' + cls;
+  el.innerHTML = html;
+  el.style.display = 'flex';
+}
 
+function sembunyikanOverlay_() {
+  var el = document.getElementById('cameraOverlay');
+  if (el) el.style.display = 'none';
+}
+
+function onScanSuccess(decodedText) {
+  if (!decodedText) return;
+  var nimMhs = decodedText.trim();
+  var now = Date.now();
+
+  if (isProcessing) return; // masih memproses scan sebelumnya
+  if (nimMhs === lastNimScanned && (now - lastScanTime) < COOLDOWN_MS) return; // QR sama masih di depan kamera, jangan dobel
+
+  isProcessing = true;
+  lastNimScanned = nimMhs;
+  lastScanTime = now;
+  document.getElementById('notifManual').classList.add('d-none');
+
+  tampilkanOverlay_('bg-proses',
+    '<div class="spinner-border text-primary" style="width:3rem;height:3rem;" role="status"></div>' +
+    '<p>Sedang Memproses...<br><span class="text-muted" style="font-size:.9rem;">NIM: ' + nimMhs + '</span></p>');
+
+  kirimDataAbsen(nimMhs);
+}
+function onScanFailure() { /* biarkan terus mencari QR, kamera tetap jalan */ }
+
+function kirimDataAbsen(nimMhs) {
   catatAbsenApi(nimMhs).then(function (respon) {
     if (respon.status === 'success' && !respon.pesan.includes('Tidak Dikenal')) {
       if (navigator.vibrate) navigator.vibrate(200);
-      if (isFromCamera && overlayDiv) {
-        overlayDiv.className = 'scanner-overlay bg-sukses';
-        overlayDiv.innerHTML = '<span style="font-size:3.5rem;">✅</span><p>' + respon.pesan + '</p>';
-      }
+      tampilkanOverlay_('bg-sukses', '<span style="font-size:3.5rem;">✅</span><p>' + respon.pesan + '</p>');
     } else {
-      if (isFromCamera && overlayDiv) {
-        overlayDiv.className = 'scanner-overlay bg-gagal';
-        overlayDiv.innerHTML = '<span style="font-size:3.5rem;">❌</span><p>Ditolak!<br><span style="font-size:.95rem;font-weight:normal;">NIM tidak terdaftar di database.</span></p>';
-      }
+      tampilkanOverlay_('bg-gagal', '<span style="font-size:3.5rem;">❌</span><p>Ditolak!<br><span style="font-size:.95rem;font-weight:normal;">NIM tidak terdaftar di database.</span></p>');
     }
-    if (isFromCamera) {
-      setTimeout(function () {
-        document.getElementById('reader').innerHTML = '';
-        startScanner();
-        isProcessing = false;
-      }, 3000);
-    }
+    setTimeout(function () { sembunyikanOverlay_(); isProcessing = false; }, 1800);
   }).catch(function () {
-    if (isFromCamera && overlayDiv) {
-      overlayDiv.className = 'scanner-overlay bg-gagal';
-      overlayDiv.innerHTML = '<span style="font-size:3.5rem;">❌</span><p>Koneksi ke Server Terputus!</p>';
-      setTimeout(function () {
-        document.getElementById('reader').innerHTML = '';
-        startScanner();
-        isProcessing = false;
-      }, 2000);
-    }
+    tampilkanOverlay_('bg-gagal', '<span style="font-size:3.5rem;">❌</span><p>Koneksi ke Server Terputus!<br><span style="font-size:.85rem;font-weight:normal;">Coba lagi sebentar.</span></p>');
+    setTimeout(function () { sembunyikanOverlay_(); isProcessing = false; }, 2000);
   });
 }
 
